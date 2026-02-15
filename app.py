@@ -44,6 +44,21 @@ def suggest_usernames(base, cursor):
             suggestions.append(new_name)
     return suggestions
 
+def suggest_child_names(base, cursor, adult_id):
+    suggestions = []
+    while len(suggestions) < 5:
+        suffix = random.randint(100, 9999)
+        new_name = f"{base}{suffix}"
+
+        cursor.execute(
+            "SELECT 1 FROM child WHERE adult_id = ? AND child_name = ?",
+            (adult_id, new_name)
+        )
+        if not cursor.fetchone():
+            suggestions.append(new_name)
+    return suggestions
+
+
 # ================= SIGNUP =================
 @app.route("/signup", methods=["POST"])
 def signup():
@@ -113,7 +128,49 @@ def login():
 
     return jsonify({"message": "Login successful"}), 200
 
+# ================= RESET PASSWORD =================
+@app.route("/reset-password", methods=["POST"])
+def reset_password():
+    data = request.json
+    email = data.get("email")
+    new_password = data.get("new_password")
+
+    if not email or not new_password:
+        return jsonify({"error": "Missing fields"}), 400
+
+    # Validate using the same function
+    if not is_valid_password(new_password):
+        return jsonify({
+            "error": "Weak password. Must include uppercase, lowercase, number, symbol, and be 8+ chars"
+        }), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Check user exists
+    cursor.execute(
+        "SELECT adult_id FROM responsible_adult WHERE email = ?",
+        (email,)
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    # Update password
+    cursor.execute(
+        "UPDATE responsible_adult SET password_hash = ? WHERE email = ?",
+        (hash_password(new_password), email)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": "Password updated successfully"}), 200
+
 # ================= ADD CHILD =================
+
 @app.route("/add-child", methods=["POST"])
 def add_child():
     data = request.json
@@ -121,6 +178,7 @@ def add_child():
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # 1. Verify parent exists
     cursor.execute(
         "SELECT adult_id FROM responsible_adult WHERE email = ?",
         (data["email"],)
@@ -131,11 +189,29 @@ def add_child():
         conn.close()
         return jsonify({"error": "Adult not found"}), 404
 
+    adult_id = adult["adult_id"]
+
+    # 2. Check if child name already exists for this parent
+    cursor.execute(
+        "SELECT 1 FROM child WHERE adult_id = ? AND child_name = ?",
+        (adult_id, data["name"])
+    )
+    if cursor.fetchone():
+        # Generate suggestions
+        suggestions = suggest_child_names(data["name"], cursor, adult_id)
+        conn.close()
+        return jsonify({
+            "exists": True,
+            "message": "Child name already exists",
+            "suggestions": suggestions
+        }), 200  # use 200 so Flutter can parse suggestions
+
+    # 3. Otherwise, insert new child
     cursor.execute("""
         INSERT INTO child (adult_id, child_name, gender, age, grade)
         VALUES (?, ?, ?, ?, ?)
     """, (
-        adult["adult_id"],
+        adult_id,
         data["name"],
         data["gender"],
         data["age"],
@@ -323,12 +399,16 @@ def view_report(child_name):
     attention_result = ml_model_2_attention(att_data)
     memory_result = ml_model_3_memory(mem_data)
 
+     # Only send status if activities 10–13 done
+    attention_result_final = attention_result if len(att_data) >= 2 else "Not Yet Tested"
+    memory_result_final = memory_result if len(mem_data) >= 2 else "Not Yet Tested"
+
     return jsonify({
         "child": dict(child),
         "activities": [dict(a) for a in activities],
         "dyscalculia_risk": dys_result,
-        "attention_status": attention_result,
-        "memory_status": memory_result
+        "attention_status": attention_result_final,
+        "memory_status": memory_result_final
     }), 200
 
 # ================= CHILD LIST =================
