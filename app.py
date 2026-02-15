@@ -222,6 +222,66 @@ def add_child():
     conn.close()
     return jsonify({"message": "Child added"}), 201
 
+@app.route("/child/<child_name>", methods=["GET"])
+def get_child_details(child_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT child_name, age, grade, gender
+        FROM child
+        WHERE child_name = ?
+    """, (child_name,))
+    
+    child = cursor.fetchone()
+    conn.close()
+
+    if not child:
+        return jsonify({"error": "Child not found"}), 404
+
+    return jsonify({
+        "name": child["child_name"],
+        "age": child["age"],
+        "grade": child["grade"],
+        "gender": child["gender"]
+    }), 200
+
+@app.route("/update-child", methods=["PUT"])
+def update_child():
+    data = request.json
+    old_name = data.get("old_name")
+    new_name = data.get("name")
+    age = data.get("age")
+    grade = data.get("grade")
+    gender = data.get("gender")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Check child exists
+    cursor.execute(
+        "SELECT child_id FROM child WHERE child_name = ?",
+        (old_name,)
+    )
+    child = cursor.fetchone()
+
+    if not child:
+        conn.close()
+        return jsonify({"error": "Child not found"}), 404
+
+    # Update the child
+    cursor.execute("""
+        UPDATE child
+        SET child_name = ?, age = ?, grade = ?, gender = ?
+        WHERE child_name = ?
+    """, (new_name, age, grade, gender, old_name))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": "Child updated"}), 200
+
+
 # ================= SAVE ACTIVITY =================
 @app.route('/save-activity', methods=['POST'])
 def save_activity():
